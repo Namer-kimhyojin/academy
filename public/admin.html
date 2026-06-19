@@ -39,6 +39,19 @@
     padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
   .pillrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
   .seg{font-size:12px;color:var(--muted)}
+  /* 필터 바 (라벨 + 셀렉트 카드형) */
+  .filterhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .filterhead b{font-size:15px}
+  .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .fitem{display:flex;flex-direction:column;gap:4px}
+  .fitem label{font-size:12px;font-weight:700;color:var(--muted)}
+  .fitem select{padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:#fff;cursor:pointer;width:100%}
+  /* 개요 대시보드 카드 그리드 */
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+  .ov-card{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:#fbfdff}
+  .ov-card .qlabel{margin:0 0 8px}
+  .ov-card .bar .bl{width:96px;font-size:12px}
+  .ov-card .bar .bv{width:52px;font-size:12px}
   /* 버튼 변형 */
   .toolbar button.btn-danger{background:#fff0f0;border-color:#ffc9c9;color:#c92a2a}
   .toolbar button.btn-go{background:var(--brand);border-color:var(--brand);color:#fff}

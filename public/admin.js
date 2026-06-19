@@ -8,21 +8,23 @@
   const QIDX = {};
   SCHEMA.forEach((sec) => sec.questions.forEach((q) => (QIDX[q.id] = q)));
 
-  // 인구통계 필터 정의 (기수·연도 + 성별·지역·전공·경험)
+  // 필터 정의 — 연도 > 기수 > 인구통계(성별·연령·지역·전공·경험) 순
   const FILTER_DEFS = [
-    { id: "cohort", label: "기수" },
     { id: "year", label: "연도" },
+    { id: "cohort", label: "기수" },
     { id: "gender", label: "성별", q: "gender" },
+    { id: "age", label: "연령", q: "age" },
     { id: "region", label: "지역", q: "region" },
     { id: "major", label: "전공", q: "major" },
     { id: "experience", label: "경험", q: "experience" },
-  ];
+  ].filter((d) => d.id === "year" || d.id === "cohort" || QIDX[d.q]);
 
   // state
   let ALL = [];
   let filters = {};
   FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL"));
-  let cmpMetric = "count";
+  let ovDim = QIDX["region"] ? "region" : "cohort";
+  let ovMetric = "count";
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -232,17 +234,33 @@
     return blockWrap("⏱️ 소요시간 분포 · 미응답률", dn + "명 소요시간 측정", '<div class="grid2"><div><div class="qlabel">설문 소요시간 분포</div>' + durBars + "</div><div><div class=\"qlabel\">문항별 미응답률 (상위 10)</div>" + missBars + "</div></div>");
   }
 
-  /* ---------------- 기수·연도 비교 ---------------- */
-  const CMP_METRICS = [
+  /* ---------------- 대시보드 개요 (필터 기반) ---------------- */
+  // 세그먼트 탐색용 지표 — 존재하는 문항만 자동 포함
+  const BASE_METRICS = [
     { id: "count", label: "응답 수", kind: "count" },
-    { id: "comp", label: "사전 역량 평균(2번)", kind: "grid", max: 5 },
-    { id: "topic_interest", label: "주제 관심도 평균(3번)", kind: "grid", max: 5 },
-    { id: "mentoring_topics", label: "멘토링 필요도 평균(7번)", kind: "grid", max: 5 },
-    { id: "jobservice_need", label: "취업연계 필요도 평균(8번)", kind: "grid", max: 5 },
-    { id: "networking_need", label: "네트워킹 필요도 평균(9번)", kind: "grid", max: 5 },
+    { id: "comp", label: "사전 역량 평균(5점)", kind: "grid", max: 5 },
+    { id: "topic_interest", label: "주제 관심도 평균(5점)", kind: "grid", max: 5 },
+    { id: "mentoring_topics", label: "멘토링 필요도 평균(5점)", kind: "grid", max: 5 },
+    { id: "jobservice_need", label: "취업연계 필요도 평균(5점)", kind: "grid", max: 5 },
+    { id: "networking_need", label: "네트워킹 필요도 평균(5점)", kind: "grid", max: 5 },
     { id: "mentor_want", label: "멘토링 참여희망률(%)", kind: "rate", max: 100 },
     { id: "theory_practice", label: "실습 비중 평균(%)", kind: "slider", max: 100 },
   ];
+  const METRICS = BASE_METRICS.filter((m) => m.id === "count" || (m.kind === "rate" ? QIDX["mentoring_need"] : QIDX[m.id]));
+  // 비교 차원
+  const DIMENSIONS = [
+    { id: "year", label: "연도" },
+    { id: "cohort", label: "기수" },
+    { id: "gender", label: "성별", q: "gender" },
+    { id: "age", label: "연령", q: "age" },
+    { id: "region", label: "지역", q: "region" },
+    { id: "edu", label: "학력", q: "edu" },
+    { id: "major", label: "전공", q: "major" },
+    { id: "status", label: "현재 상황", q: "status" },
+    { id: "experience", label: "경험", q: "experience" },
+  ].filter((d) => d.id === "year" || d.id === "cohort" || QIDX[d.q]);
+  function dimValue(r, dim) { if (dim.id === "year") return getYear(r); if (dim.id === "cohort") return getCohort(r); return val(r, dim.q); }
+  function groupKeys(subset, dim) { if (dim.id === "year") return yearOrder(subset); if (dim.id === "cohort") return cohortOrder(subset); const q = QIDX[dim.q]; return q ? q.options.slice() : []; }
   function groupMetric(subset, metric) {
     if (!subset.length) return { v: 0, txt: "0명" };
     if (metric.kind === "count") return { v: subset.length, txt: subset.length + "명" };
@@ -251,33 +269,56 @@
     if (metric.kind === "slider") { const a = sliderStats(metric.id, subset).avg; return { v: a, txt: a.toFixed(0) + "%" }; }
     return { v: 0, txt: "-" };
   }
-  function renderCompare() {
-    const metric = CMP_METRICS.find((m) => m.id === cmpMetric) || CMP_METRICS[0];
-    const cohorts = cohortOrder(ALL);
-    const years = yearOrder(ALL);
-    const cohortCounts = cohorts.map((c) => ({ k: c, n: ALL.filter((r) => getCohort(r) === c).length }));
-    const yearCounts = years.map((y) => ({ k: y, n: ALL.filter((r) => getYear(r) === y).length }));
-    const ccMax = Math.max(1, ...cohortCounts.map((x) => x.n));
-    const ycMax = Math.max(1, ...yearCounts.map((x) => x.n));
-    const cohortMetric = cohorts.map((c) => ({ k: c, m: groupMetric(ALL.filter((r) => getCohort(r) === c), metric), n: ALL.filter((r) => getCohort(r) === c).length }));
-    const yearMetric = years.map((y) => ({ k: y, m: groupMetric(ALL.filter((r) => getYear(r) === y), metric), n: ALL.filter((r) => getYear(r) === y).length }));
-    const metMax = metric.kind === "count" ? Math.max(1, ...cohortMetric.map((x) => x.m.v), ...yearMetric.map((x) => x.m.v)) : (metric.max || 5);
-    const sel = '<select id="cmpMetric">' + CMP_METRICS.map((m) => '<option value="' + m.id + '"' + (m.id === cmpMetric ? " selected" : "") + ">" + esc(m.label) + "</option>").join("") + "</select>";
-    const html =
-      '<div class="block"><h3>📈 기수별 · 연도별 비교</h3>' +
-      '<p class="sub">전체 데이터를 기수와 연도로 나누어 비교합니다. (아래 상세 통계는 필터에 따라 달라집니다)</p>' +
-      '<div class="grid2">' +
-        '<div><div class="qlabel">기수별 응답 수</div>' + cohortCounts.map((x) => bar(x.k, x.n, ccMax, x.n + "명")).join("") + "</div>" +
-        '<div><div class="qlabel">연도별 응답 수</div>' + (yearCounts.length ? yearCounts.map((x) => bar(x.k, x.n, ycMax, x.n + "명")).join("") : '<p class="muted">데이터 없음</p>') + "</div>" +
-      "</div>" +
-      '<div class="toolbar" style="margin-top:18px">비교 지표: ' + sel + "</div>" +
-      '<div class="grid2" style="margin-top:8px">' +
-        '<div><div class="qlabel">기수별 ' + esc(metric.label) + "</div>" + cohortMetric.map((x, i) => bar(x.k + " (" + x.n + "명)", x.m.v, metMax, x.m.txt, i === 0 && metric.kind !== "count")).join("") + "</div>" +
-        '<div><div class="qlabel">연도별 ' + esc(metric.label) + "</div>" + (yearMetric.length ? yearMetric.map((x) => bar(x.k + " (" + x.n + "명)", x.m.v, metMax, x.m.txt)).join("") : '<p class="muted">데이터 없음</p>') + "</div>" +
-      "</div></div>";
-    document.getElementById("compare").innerHTML = html;
-    const ms = document.getElementById("cmpMetric");
-    if (ms) ms.onchange = () => { cmpMetric = ms.value; renderCompare(); };
+  // 인구통계 미니 분포 (상위 6개 항목)
+  function miniDist(qid, subset) {
+    const q = QIDX[qid]; if (!q) return "";
+    const { c } = countSingle(q, subset);
+    const max = Math.max(1, ...Object.values(c));
+    const sorted = q.options.slice().sort((a, b) => c[b] - c[a]).filter((o) => c[o] > 0).slice(0, 6);
+    if (!sorted.length) return '<p class="muted">응답 없음</p>';
+    return sorted.map((o) => bar(o, c[o], max, c[o] + "명")).join("");
+  }
+  // 세그먼트 탐색 (차원 × 지표 자유 비교)
+  function overviewSegmentHTML() {
+    const dsel = '<select id="ovDim">' + DIMENSIONS.map((d) => '<option value="' + d.id + '"' + (d.id === ovDim ? " selected" : "") + ">" + esc(d.label) + "</option>").join("") + "</select>";
+    const msel = '<select id="ovMetric">' + METRICS.map((m) => '<option value="' + m.id + '"' + (m.id === ovMetric ? " selected" : "") + ">" + esc(m.label) + "</option>").join("") + "</select>";
+    return '<div class="block"><h3>🧭 세그먼트 탐색</h3><p class="sub">기준(차원)과 지표를 자유롭게 골라 비교하세요. (현재 필터 적용)</p>' +
+      '<div class="toolbar">차원: ' + dsel + " 지표: " + msel + "</div><div id=\"ovSegOut\" style=\"margin-top:12px\"></div></div>";
+  }
+  function ovSegRender(subset) {
+    const dim = DIMENSIONS.find((d) => d.id === ovDim) || DIMENSIONS[0];
+    const metric = METRICS.find((m) => m.id === ovMetric) || METRICS[0];
+    const keys = groupKeys(subset, dim);
+    const rows = keys.map((k) => { const rs = subset.filter((r) => String(dimValue(r, dim)) === String(k)); return { k, m: groupMetric(rs, metric), n: rs.length }; }).filter((x) => x.n > 0);
+    if (!rows.length) return '<p class="muted">표시할 데이터가 없습니다.</p>';
+    if (metric.kind !== "count") rows.sort((a, b) => b.m.v - a.m.v);
+    const max = metric.kind === "count" ? Math.max(1, ...rows.map((x) => x.m.v)) : (metric.max || 5);
+    return rows.map((x, i) => bar(x.k + " (" + x.n + "명)", x.m.v, max, x.m.txt, i === 0 && metric.kind !== "count")).join("");
+  }
+  function bindOvSeg(subset) {
+    const d = document.getElementById("ovDim"), m = document.getElementById("ovMetric"); if (!d || !m) return;
+    const run = () => { ovDim = d.value; ovMetric = m.value; document.getElementById("ovSegOut").innerHTML = ovSegRender(subset); };
+    d.onchange = run; m.onchange = run; run();
+  }
+  function renderOverview(subset) {
+    const elc = document.getElementById("overview"); if (!elc) return;
+    const n = subset.length;
+    if (n === 0) { elc.innerHTML = '<div class="block"><h3>📊 대시보드 개요</h3><p class="muted">선택한 필터에 해당하는 응답이 없습니다.</p></div>'; return; }
+    const durs = subset.map((r) => r.meta && r.meta.durationSec).filter((x) => x);
+    const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 60) : "—";
+    const kpis = [kpi(n, "응답 수"), kpi(avgDur, "평균 소요(분)"), kpi(Math.round(wantRate(subset)) + "%", "멘토링 참여희망")];
+    if (QIDX["theory_practice"]) kpis.push(kpi(Math.round(sliderStats("theory_practice", subset).avg) + "%", "실습 비중 평균"));
+    if (QIDX["topic_interest"]) { const t = gridAverages(QIDX["topic_interest"], subset).slice().sort((a, b) => b.avg - a.avg)[0]; if (t && t.n) kpis.push(kpi(String(t.label || "").replace(/\(.*$/, "").slice(0, 10), "최다 관심 주제")); }
+    let html = '<div class="block"><h3>📊 대시보드 개요</h3><p class="sub">' + esc(filterLabelText()) + " · 현재 " + n + "명 기준</p><div class=\"kpis\">" + kpis.join("") + "</div></div>";
+    const demoCards = [["gender", "성별"], ["age", "연령"], ["region", "지역"], ["major", "전공"], ["experience", "경험"], ["status", "현재 상황"]]
+      .filter(([id]) => QIDX[id]).map(([id, lab]) => '<div class="ov-card"><div class="qlabel">' + esc(lab) + "</div>" + miniDist(id, subset) + "</div>").join("");
+    if (demoCards) html += '<div class="block"><h3>👥 응답자 구성</h3><p class="sub">현재 필터 기준 인구통계 분포 (상위 항목)</p><div class="ovgrid">' + demoCards + "</div></div>";
+    const keyDefs = [["comp", "사전 역량"], ["topic_interest", "주제 관심도"], ["mentoring_topics", "멘토링 필요도"], ["jobservice_need", "취업연계 필요도"], ["networking_need", "네트워킹 필요도"]].filter(([id]) => QIDX[id]);
+    if (keyDefs.length) { const kbars = keyDefs.map(([id, lab]) => { const a = gridAvgAll(id, subset); return bar(lab, a, 5, a.toFixed(2) + " / 5"); }).join(""); html += blockWrap("🎯 핵심 지표 (5점 평균)", "높을수록 강함/중요/필요", kbars); }
+    html += trendHTML(subset);
+    html += overviewSegmentHTML();
+    elc.innerHTML = html;
+    bindOvSeg(subset);
   }
 
   /* ---------------- 교차 분석 (그룹별 평균) ---------------- */
@@ -527,7 +568,6 @@
     const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 60) : "—";
     let html = '<div class="block" style="background:var(--brand-soft);border-color:#cfe0ff"><b>상세 통계 기준:</b> ' + esc(filterLabel) + "</div>";
     html += '<div class="kpis">' + kpi(n, "응답 수") + kpi(avgDur, "평균 소요(분)") + kpi(Math.round(wantRate(subset)) + "%", "멘토링 참여희망") + "</div>";
-    html += trendHTML(subset);
     html += durationMissingHTML(subset);
     SCHEMA.forEach((sec) => {
       html += '<div class="block" style="background:transparent;border:0;box-shadow:none;padding:8px 2px 0"><h3 style="font-size:18px">' + esc(sec.title) + "</h3></div>";
@@ -542,12 +582,10 @@
       });
     });
     html += heatmapHTML();
-    html += crossAnalysisHTML();
     html += keywordsHTML(subset);
     html += dataManageHTML(subset);
     document.getElementById("detail").innerHTML = html;
     bindHeat(subset);
-    bindCross(subset);
     bindDataManage(subset);
   }
 
@@ -567,28 +605,33 @@
         '<p class="muted">설문(또는 기수별 링크)을 공유한 뒤 응답이 들어오면 이곳에 통계가 표시됩니다.</p></div>';
       root.innerHTML = html; bindTop(); return;
     }
-    // 필터 UI
-    let filtUI = "<b>필터</b> ";
+    // 필터 UI (연도 > 기수 > 인구통계 순, 라벨+셀렉트 카드형)
+    let filtUI = "";
     FILTER_DEFS.forEach((d) => {
       let opts;
       if (d.id === "cohort") opts = cohortOrder(all);
       else if (d.id === "year") opts = yearOrder(all);
       else { const q = QIDX[d.q || d.id]; if (!q) return; opts = q.options; }
-      filtUI += d.label + ': <select data-filter="' + d.id + '"><option value="ALL">전체</option>' +
-        opts.map((o) => '<option value="' + esc(o) + '">' + esc(o) + "</option>").join("") + "</select> ";
+      filtUI += '<div class="fitem"><label>' + esc(d.label) + '</label><select data-filter="' + d.id + '"><option value="ALL">전체</option>' +
+        opts.map((o) => '<option value="' + esc(o) + '">' + esc(o) + "</option>").join("") + "</select></div>";
     });
-    html += '<div class="block no-print"><div class="toolbar">' + filtUI +
-      '<span class="seg">총 ' + all.length + "명 응답</span> <button id=\"clearFilters\">필터 초기화</button></div></div>";
-    html += '<div id="compare"></div><div id="detail"></div>';
+    html += '<div class="block no-print"><div class="filterhead"><b>🔎 필터</b><span class="seg" id="filtSummary"></span><button id="clearFilters" style="margin-left:auto">필터 초기화</button></div>' +
+      '<div class="fgrid">' + filtUI + "</div></div>";
+    html += '<div id="overview"></div><div id="detail"></div>';
     root.innerHTML = html;
     bindTop();
+    const refresh = () => { const s = currentSubset(); updateFilterSummary(); renderOverview(s); renderDetail(s); };
     document.querySelectorAll("select[data-filter]").forEach((sel) => {
-      sel.onchange = () => { filters[sel.getAttribute("data-filter")] = sel.value; renderDetail(currentSubset()); };
+      sel.onchange = () => { filters[sel.getAttribute("data-filter")] = sel.value; refresh(); };
     });
     const cf = document.getElementById("clearFilters");
-    if (cf) cf.onclick = () => { FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL")); document.querySelectorAll("select[data-filter]").forEach((s) => (s.value = "ALL")); renderDetail(currentSubset()); };
-    renderCompare();
-    renderDetail(currentSubset());
+    if (cf) cf.onclick = () => { FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL")); document.querySelectorAll("select[data-filter]").forEach((s) => (s.value = "ALL")); refresh(); };
+    refresh();
+  }
+  function updateFilterSummary() {
+    const el = document.getElementById("filtSummary"); if (!el) return;
+    const active = []; FILTER_DEFS.forEach((d) => { if (filters[d.id] !== "ALL") active.push(d.label + "=" + filters[d.id]); });
+    el.textContent = (active.length ? active.join(" · ") + " · " : "") + currentSubset().length + "명 / 전체 " + ALL.length + "명";
   }
   function bindTop() {
     const rb = document.getElementById("reloadBtn"); if (rb) rb.onclick = () => load(sessionStorage.getItem(KEY_STORE));
