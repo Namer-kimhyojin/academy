@@ -483,10 +483,14 @@
   }
 
   /* ---------------- 내보내기 (원본 CSV / 집계표 CSV / Excel / 인쇄) ---------------- */
+  // 척도/값 사람이 읽을 수 있게 변환 (AI 분석용)
+  function scaleText(scale) { if (!scale) return ""; return Object.keys(scale).sort((a, b) => a - b).map((k) => k + "=" + scale[k]).join(", "); }
+  function gridCell(q, num) { if (num == null || num === "") return ""; return num + (q.scale && q.scale[num] ? " (" + q.scale[num] + ")" : ""); }
+  // 넓은(wide) 표 — 문항 전문 헤더 + 답변 전문(척도값은 라벨 동반)
   function rawTableRows(responses) {
-    const cols = ["응답번호", "기수", "연도", "제출시각", "소요(분)"];
+    const cols = ["응답ID", "기수", "연도", "제출시각", "소요(분)"];
     const getters = [
-      (r, i) => i + 1,
+      (r) => r.id || "",
       (r) => getCohort(r),
       (r) => getYear(r),
       (r) => (r.meta && r.meta.submittedAt ? new Date(r.meta.submittedAt).toLocaleString("ko-KR") : ""),
@@ -494,13 +498,37 @@
     ];
     SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
       if (q.id === "cohort") return;
-      if (q.type === "likert_grid") q.items.forEach((it) => { cols.push(q.id + ":" + it.label); getters.push((r) => { const v = val(r, q.id); return v && v[it.id] != null ? v[it.id] : ""; }); });
-      else if (q.type === "rank") { for (let s = 0; s < q.slots; s++) { cols.push(q.title + " " + (s + 1) + "순위"); getters.push((r) => { const v = val(r, q.id); return Array.isArray(v) ? (v[s] || "") : ""; }); } }
+      if (q.type === "likert_grid") q.items.forEach((it) => { cols.push(q.title + " — " + it.label); getters.push((r) => { const v = val(r, q.id); return v && v[it.id] != null ? gridCell(q, v[it.id]) : ""; }); });
+      else if (q.type === "rank") { for (let s = 0; s < q.slots; s++) { cols.push(q.title + " (" + (s + 1) + "순위)"); getters.push((r) => { const v = val(r, q.id); return Array.isArray(v) ? (v[s] || "") : ""; }); } }
       else if (q.type === "multi") { cols.push(q.title); getters.push((r) => { const v = val(r, q.id); return Array.isArray(v) ? v.join(" | ") : ""; }); }
+      else if (q.type === "slider") { cols.push(q.title); getters.push((r) => { const v = val(r, q.id); return v == null ? "" : v + (q.unit || ""); }); }
       else { cols.push(q.title); getters.push((r) => { const v = val(r, q.id); return v == null ? "" : v; }); }
     }));
     const rows = [cols];
-    responses.forEach((r, i) => rows.push(getters.map((g) => g(r, i))));
+    responses.forEach((r) => rows.push(getters.map((g) => g(r))));
+    return rows;
+  }
+  // 롱(tidy) 표 — 한 행 = 하나의 (응답 × 문항 × 답변). AI가 바로 집계·분석 가능
+  function longTableRows(responses) {
+    const rows = [["응답ID", "기수", "연도", "제출시각", "소요(분)", "섹션", "문항ID", "문항", "하위항목", "답변", "척도설명"]];
+    responses.forEach((r) => {
+      const base = [
+        r.id || "", getCohort(r), getYear(r),
+        (r.meta && r.meta.submittedAt ? new Date(r.meta.submittedAt).toLocaleString("ko-KR") : ""),
+        (r.meta && r.meta.durationSec ? (r.meta.durationSec / 60).toFixed(1) : ""),
+      ];
+      const push = (secT, q, sub, ans, scale) => rows.push(base.concat([secT, q.id, q.title, sub, ans, scale || ""]));
+      SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
+        if (q.id === "cohort") return;
+        const v = val(r, q.id);
+        if (q.type === "likert_grid") { const sc = scaleText(q.scale); q.items.forEach((it) => { const num = v && v[it.id] != null ? v[it.id] : null; push(sec.title, q, it.label, num != null ? gridCell(q, num) : "(무응답)", sc); }); }
+        else if (q.type === "rank") { for (let s = 0; s < q.slots; s++) { const opt = Array.isArray(v) ? (v[s] || "") : ""; push(sec.title, q, (s + 1) + "순위", opt || "(무응답)", ""); } }
+        else if (q.type === "multi") { if (Array.isArray(v) && v.filter((x) => x).length) v.forEach((opt) => push(sec.title, q, "", opt, "")); else push(sec.title, q, "", "(무응답)", ""); }
+        else if (q.type === "slider") { push(sec.title, q, "", v != null ? v + (q.unit || "") : "(무응답)", (q.minLabel || "") + " ↔ " + (q.maxLabel || "")); }
+        else if (q.type === "text" || q.type === "textarea") { push(sec.title, q, "", v && String(v).trim() ? String(v).trim() : "(무응답)", ""); }
+        else { push(sec.title, q, "", v != null && String(v) !== "" ? v : "(무응답)", ""); }
+      }));
+    });
     return rows;
   }
   function summaryRows(subset) {
@@ -526,6 +554,7 @@
   }
   function downloadRawCSV(responses) { downloadBlob(csvFromRows(rawTableRows(responses)), "text/csv;charset=utf-8;", "수요조사_원본", ".csv"); }
   function downloadSummaryCSV(subset) { downloadBlob(csvFromRows(summaryRows(subset)), "text/csv;charset=utf-8;", "수요조사_집계표", ".csv"); }
+  function downloadLongCSV(subset) { downloadBlob(csvFromRows(longTableRows(subset)), "text/csv;charset=utf-8;", "수요조사_AI분석용", ".csv"); }
   function xmlEsc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   function sheetXML(name, rows) {
     const body = rows.map((row) => "<Row>" + row.map((cell) => {
@@ -595,6 +624,7 @@
     FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL"));
     let html = '<div class="toolbar no-print" style="justify-content:flex-end;margin-bottom:14px">' +
       '<button id="reloadBtn">↻ 새로고침</button>' +
+      '<button id="aiCsvBtn">🤖 AI 분석용 CSV</button>' +
       '<button id="csvBtn">⬇ 원본 CSV</button>' +
       '<button id="sumCsvBtn">⬇ 집계표 CSV</button>' +
       '<button id="xlsBtn">⬇ Excel(.xls)</button>' +
@@ -635,6 +665,7 @@
   }
   function bindTop() {
     const rb = document.getElementById("reloadBtn"); if (rb) rb.onclick = () => load(sessionStorage.getItem(KEY_STORE));
+    const ab = document.getElementById("aiCsvBtn"); if (ab) ab.onclick = () => downloadLongCSV(currentSubset());
     const cb = document.getElementById("csvBtn"); if (cb) cb.onclick = () => downloadRawCSV(ALL);
     const sb = document.getElementById("sumCsvBtn"); if (sb) sb.onclick = () => downloadSummaryCSV(currentSubset());
     const xb = document.getElementById("xlsBtn"); if (xb) xb.onclick = () => downloadXLS(currentSubset());
