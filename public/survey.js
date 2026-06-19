@@ -340,14 +340,27 @@
         });
         inp.addEventListener("change", saveDraft);
       } else if (q.type === "rank") {
-        el.querySelectorAll("select").forEach((sel2) =>
+        const rankSelects = el.querySelectorAll("select");
+        // 이미 다른 순위에서 고른 항목은 나머지 드롭다운에서 선택 불가(비활성)로 만들어 중복 방지
+        const refreshRankOptions = () => {
+          const chosen = Array.from(rankSelects).map((s) => s.value).filter((v) => v);
+          rankSelects.forEach((s) => {
+            Array.from(s.options).forEach((opt) => {
+              if (opt.value === "") return; // "— 선택 —" placeholder는 유지
+              opt.disabled = chosen.includes(opt.value) && opt.value !== s.value;
+            });
+          });
+        };
+        rankSelects.forEach((sel2) =>
           sel2.addEventListener("change", () => {
             const arr = [];
-            el.querySelectorAll("select").forEach((s) => arr.push(s.value));
-            answers[q.id] = arr; // duplicates are caught during validation
+            rankSelects.forEach((s) => arr.push(s.value));
+            answers[q.id] = arr;
+            refreshRankOptions();
             saveDraft();
           })
         );
+        refreshRankOptions(); // 초안 복원 등 초기 상태에도 즉시 적용
       } else if (q.type === "text" || q.type === "textarea") {
         const inp = el.querySelector("textarea,input");
         inp.addEventListener("input", () => {
