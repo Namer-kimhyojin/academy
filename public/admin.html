@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>수요조사 분석 대시보드 · 배터리아카데미</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body.admin{background:#f0f3f9}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:18px 20px}
+  .kpi .num{font-size:30px;font-weight:800;color:var(--brand-dark);line-height:1.1}
+  .kpi .lab{font-size:13px;color:var(--muted);margin-top:4px}
+  .block{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:22px 24px;margin-top:18px}
+  .block h3{font-size:17px;margin:0 0 4px;font-weight:800}
+  .block .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:780px){.grid2{grid-template-columns:1fr}}
+  .qlabel{font-weight:700;font-size:14px;margin:18px 0 8px}
+  .bar{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:13px}
+  .bar .bl{flex:none;width:200px;text-align:right;color:var(--ink)}
+  .bar .bt{flex:1;background:#eef2f8;border-radius:7px;overflow:hidden;height:22px;position:relative}
+  .bar .bf{height:100%;background:linear-gradient(90deg,var(--brand),#5aa2ff);border-radius:7px;min-width:2px}
+  .bar .bv{flex:none;width:90px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar.hot .bf{background:linear-gradient(90deg,#e8590c,#ffa94d)}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .toolbar select,.toolbar button{padding:9px 14px;border:1.5px solid var(--line);border-radius:10px;
+    font-size:14px;font-family:inherit;background:#fff;cursor:pointer}
+  .txtlist{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
+  .txtlist div{padding:9px 11px;border-bottom:1px solid var(--line);font-size:14px}
+  .txtlist div:last-child{border-bottom:0}
+  .muted{color:var(--muted)}
+  .login{max-width:380px;margin:60px auto}
+  .login input{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;margin:10px 0}
+  .radar-wrap{display:flex;justify-content:center}
+  .tag{display:inline-block;background:var(--brand-soft);color:var(--brand-dark);border-radius:99px;
+    padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
+  .pillrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .seg{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body class="admin">
+<header class="top">
+  <div class="top-inner">
+    <div class="brandrow">
+      <div class="logo">📊</div>
+      <div>
+        <h1>교육 수요조사 분석 대시보드</h1>
+        <small>배터리아카데미 · 응답 통계</small>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="root"></div>
+</main>
+
+<script src="questions.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

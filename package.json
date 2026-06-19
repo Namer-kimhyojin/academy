@@ -1,0 +1,16 @@
+{
+  "name": "battery-academy-survey",
+  "version": "1.1.0",
+  "description": "배터리아카데미 교육 수요조사 - 웹 설문 + 통계 분석 대시보드 (DATABASE_URL 있으면 Postgres, 없으면 파일 저장)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.5"
+  },
+  "private": true
+}

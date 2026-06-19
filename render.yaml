@@ -1,0 +1,17 @@
+# Render Blueprint — 이 파일이 저장소에 있으면 Render에서 "Blueprint"로 한 번에 배포됩니다.
+# 데이터는 Neon(무료 Postgres)에 저장되므로 무료 인스턴스가 잠들었다 깨어나도 보존됩니다.
+services:
+  - type: web
+    name: battery-academy-survey
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      # 관리자(대시보드) 비밀번호 — 배포 후 Render 대시보드에서 실제 값 입력
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Neon 등 Postgres 연결 문자열 — Render 대시보드에서 실제 값 입력
+      - key: DATABASE_URL
+        sync: false

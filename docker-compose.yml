@@ -1,0 +1,18 @@
+services:
+  survey:
+    build: .
+    image: battery-academy-survey:latest
+    container_name: battery-survey
+    restart: unless-stopped
+    ports:
+      # 왼쪽(호스트 포트)을 원하는 값으로 바꿔도 됩니다. 예) "8080:3000"
+      - "9080:3000"
+    environment:
+      # ★ 운영 전 반드시 본인만 아는 값으로 변경하세요. (현재 임시값: 1234)
+      ADMIN_PASSWORD: "1234"
+      PORT: "3000"
+      DATA_DIR: "/app/data"
+    volumes:
+      # NAS의 실제 폴더에 응답 데이터를 보존합니다.
+      # Synology에서는 ./data 가 docker-compose.yml과 같은 폴더에 생성됩니다.
+      - ./data:/app/data
