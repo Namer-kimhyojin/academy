@@ -233,7 +233,7 @@
       '<div class="big-emoji">🔋</div>' +
       '<h2 class="sec-title">' + esc(META.title) + "</h2>" +
       headBlock +
-      '<div><span class="pill">⏱ 약 45~60분</span><span class="pill">🔒 익명 응답</span><span class="pill">💾 자동 임시저장</span></div>' +
+      '<div><span class="pill">⏱ 30분 이내</span><span class="pill">🔒 익명 응답</span><span class="pill">💾 자동 임시저장</span></div>' +
       '<p class="lead">' + esc(META.intro) + "</p>" +
       selBlock +
       '<div class="toc">' + secList + "</div>" +
