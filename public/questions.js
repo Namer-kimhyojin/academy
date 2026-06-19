@@ -362,6 +362,13 @@ window.SURVEY_SCHEMA = [
         ],
       },
       {
+        id: "offline_commute_mode",
+        type: "single",
+        title: "교육장까지 주로 이용할 통학(이동) 수단",
+        required: true,
+        options: ["자가용(승용차)", "대중교통(버스·지하철)", "통학버스(셔틀버스)", "도보·자전거", "기타"],
+      },
+      {
         id: "offline_commute",
         type: "single",
         title: "교육장까지 통학(이동) 가능한 시간",
