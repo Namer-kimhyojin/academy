@@ -31,6 +31,11 @@ function createFileStore() {
     return out;
   }
 
+  function cohortOf(r) { return (r.answers && r.answers.cohort) || "(미기재)"; }
+  async function writeAll(list) {
+    await fs.promises.writeFile(DATA_FILE, list.map((r) => JSON.stringify(r)).join("\n") + (list.length ? "\n" : ""));
+  }
+
   return {
     kind: "file",
     label: DATA_FILE,
@@ -40,6 +45,19 @@ function createFileStore() {
     },
     async all() { return readAll(); },
     async count() { return readAll().length; },
+    async deleteByIds(ids) {
+      const set = new Set(ids || []);
+      const all = readAll();
+      const kept = all.filter((r) => !set.has(r.id));
+      await writeAll(kept);
+      return all.length - kept.length;
+    },
+    async deleteByCohort(cohort) {
+      const all = readAll();
+      const kept = all.filter((r) => cohortOf(r) !== cohort);
+      await writeAll(kept);
+      return all.length - kept.length;
+    },
   };
 }
 
@@ -90,6 +108,20 @@ function createPgStore() {
     async count() {
       const r = await pool.query("SELECT COUNT(*)::int AS c FROM responses");
       return r.rows[0].c;
+    },
+    async deleteByIds(ids) {
+      if (!ids || !ids.length) return 0;
+      const r = await pool.query("DELETE FROM responses WHERE id = ANY($1)", [ids]);
+      return r.rowCount;
+    },
+    async deleteByCohort(cohort) {
+      let r;
+      if (cohort === "(미기재)") {
+        r = await pool.query("DELETE FROM responses WHERE (answers->>'cohort') IS NULL OR (answers->>'cohort') = ''");
+      } else {
+        r = await pool.query("DELETE FROM responses WHERE answers->>'cohort' = $1", [cohort]);
+      }
+      return r.rowCount;
     },
   };
 }

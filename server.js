@@ -36,6 +36,21 @@ function sendJSON(res, status, obj) {
   send(res, status, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8" });
 }
 
+// JSON 요청 바디를 읽어 콜백으로 전달 (크기 제한 포함)
+function readBody(req, res, cb) {
+  let body = "";
+  let tooBig = false;
+  req.on("data", (chunk) => { body += chunk; if (body.length > MAX_BODY) { tooBig = true; req.destroy(); } });
+  req.on("end", () => {
+    if (tooBig) return sendJSON(res, 413, { ok: false, error: "payload too large" });
+    let parsed;
+    try { parsed = JSON.parse(body || "{}"); } catch (e) { return sendJSON(res, 400, { ok: false, error: "invalid json" }); }
+    cb(parsed);
+  });
+}
+
+function isAdmin(req) { return (req.headers["x-admin-key"] || "") === ADMIN_PASSWORD; }
+
 function serveStatic(req, res) {
   let urlPath = decodeURIComponent(req.url.split("?")[0]);
   if (urlPath === "/" || urlPath === "") urlPath = "/index.html";
@@ -97,6 +112,30 @@ const server = http.createServer((req, res) => {
     store.all()
       .then((responses) => sendJSON(res, 200, { responses }))
       .catch((e) => { console.error("read error", e); sendJSON(res, 500, { error: "read failed" }); });
+    return;
+  }
+
+  // --- admin: delete selected responses by id ---
+  if (req.method === "POST" && url === "/api/responses/delete") {
+    if (!isAdmin(req)) return sendJSON(res, 401, { ok: false, error: "unauthorized" });
+    readBody(req, res, async (parsed) => {
+      const ids = Array.isArray(parsed.ids) ? parsed.ids.filter((x) => typeof x === "string" && x) : [];
+      if (!ids.length) return sendJSON(res, 400, { ok: false, error: "no ids" });
+      try { const deleted = await store.deleteByIds(ids); sendJSON(res, 200, { ok: true, deleted }); }
+      catch (e) { console.error("delete error", e); sendJSON(res, 500, { ok: false, error: "delete failed" }); }
+    });
+    return;
+  }
+
+  // --- admin: delete all responses of a cohort (기수별 초기화) ---
+  if (req.method === "POST" && url === "/api/responses/delete-cohort") {
+    if (!isAdmin(req)) return sendJSON(res, 401, { ok: false, error: "unauthorized" });
+    readBody(req, res, async (parsed) => {
+      const cohort = typeof parsed.cohort === "string" ? parsed.cohort : "";
+      if (!cohort) return sendJSON(res, 400, { ok: false, error: "no cohort" });
+      try { const deleted = await store.deleteByCohort(cohort); sendJSON(res, 200, { ok: true, deleted }); }
+      catch (e) { console.error("delete-cohort error", e); sendJSON(res, 500, { ok: false, error: "delete failed" }); }
+    });
     return;
   }
 

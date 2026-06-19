@@ -1,4 +1,4 @@
-/* 배터리아카데미 교육 수요조사 - 분석 대시보드 (기수·연도 분석 포함) */
+/* 배터리아카데미 교육 수요조사 - 분석 대시보드 (기수·연도 분석 + 데이터관리 + 리포트) */
 (function () {
   const SCHEMA = window.SURVEY_SCHEMA;
   const COHORTS = window.SURVEY_COHORTS || [];
@@ -8,10 +8,20 @@
   const QIDX = {};
   SCHEMA.forEach((sec) => sec.questions.forEach((q) => (QIDX[q.id] = q)));
 
+  // 인구통계 필터 정의 (기수·연도 + 성별·지역·전공·경험)
+  const FILTER_DEFS = [
+    { id: "cohort", label: "기수" },
+    { id: "year", label: "연도" },
+    { id: "gender", label: "성별", q: "gender" },
+    { id: "region", label: "지역", q: "region" },
+    { id: "major", label: "전공", q: "major" },
+    { id: "experience", label: "경험", q: "experience" },
+  ];
+
   // state
   let ALL = [];
-  let fCohort = "ALL";
-  let fYear = "ALL";
+  let filters = {};
+  FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL"));
   let cmpMetric = "count";
 
   function esc(s) {
@@ -40,6 +50,14 @@
       sessionStorage.setItem(KEY_STORE, key);
       render(data.responses || []);
     } catch (e) { loginScreen("불러오기에 실패했습니다: " + e.message); }
+  }
+  // 관리자 보호 POST (삭제 등)
+  async function apiPost(path, body) {
+    const key = sessionStorage.getItem(KEY_STORE);
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Key": key }, body: JSON.stringify(body) });
+    if (res.status === 401) throw new Error("인증 만료 — 다시 로그인하세요.");
+    if (!res.ok) throw new Error("server " + res.status);
+    return res.json();
   }
 
   /* ---------------- accessors ---------------- */
@@ -110,6 +128,13 @@
     const want = (c["매우 참여하고 싶다"] || 0) + (c["참여하고 싶다"] || 0);
     return responses.length ? (want / responses.length) * 100 : 0;
   }
+  // 문항 응답 여부 (미응답률 계산용)
+  function isAnswered(q, v) {
+    if (v == null) return false;
+    if (q.type === "multi" || q.type === "rank") return Array.isArray(v) && v.filter((x) => x).length > 0;
+    if (q.type === "likert_grid") return v && typeof v === "object" && Object.keys(v).some((k) => v[k] != null);
+    return String(v).trim().length > 0;
+  }
 
   /* ---------------- block renderers ---------------- */
   function blockWrap(title, sub, inner) { return '<div class="block"><h3>' + esc(title) + "</h3><p class='sub'>" + esc(sub) + "</p>" + inner + "</div>"; }
@@ -169,6 +194,44 @@
       '<polygon points="' + dpts + '" fill="rgba(31,111,235,.22)" stroke="#1f6feb" stroke-width="2"/>' + labels + "</svg>";
   }
 
+  /* ---------------- 응답 추세 / 소요시간·미응답 ---------------- */
+  function trendHTML(subset) {
+    const byDay = {};
+    subset.forEach((r) => {
+      const t = r.meta && (r.meta.submittedAt || r.meta.receivedAt); if (!t) return;
+      const d = new Date(t);
+      const k = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+      byDay[k] = (byDay[k] || 0) + 1;
+    });
+    const days = Object.keys(byDay).sort();
+    if (!days.length) return "";
+    const max = Math.max(1, ...days.map((d) => byDay[d]));
+    return blockWrap("📅 응답 추세 (일자별)", days.length + "일간 수집 · 총 " + subset.length + "명", days.map((d) => bar(d, byDay[d], max, byDay[d] + "명")).join(""));
+  }
+  function durationMissingHTML(subset) {
+    const buckets = { "10분 미만": 0, "10~20분": 0, "20~30분": 0, "30~45분": 0, "45분 이상": 0 };
+    let dn = 0;
+    subset.forEach((r) => {
+      const s = r.meta && r.meta.durationSec; if (s == null) return; dn++;
+      const m = s / 60;
+      if (m < 10) buckets["10분 미만"]++; else if (m < 20) buckets["10~20분"]++; else if (m < 30) buckets["20~30분"]++; else if (m < 45) buckets["30~45분"]++; else buckets["45분 이상"]++;
+    });
+    const order = Object.keys(buckets); const dmax = Math.max(1, ...order.map((k) => buckets[k]));
+    const durBars = dn ? order.map((k) => bar(k, buckets[k], dmax, buckets[k] + "명")).join("") : '<p class="muted">소요시간 데이터 없음</p>';
+    const rows = [];
+    SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
+      if (q.id === "cohort") return;
+      let answered = 0; subset.forEach((r) => { if (isAnswered(q, val(r, q.id))) answered++; });
+      const missing = subset.length - answered;
+      rows.push({ title: q.title.replace(/^\d+\.\s*/, ""), missing, pctMissing: subset.length ? (missing / subset.length) * 100 : 0 });
+    }));
+    rows.sort((a, b) => b.pctMissing - a.pctMissing);
+    const top = rows.filter((r) => r.missing > 0).slice(0, 10);
+    const mmax = Math.max(1, ...top.map((r) => r.pctMissing));
+    const missBars = top.length ? top.map((r) => bar(r.title, r.pctMissing, mmax, r.missing + "명 (" + Math.round(r.pctMissing) + "%)")).join("") : '<p class="muted">미응답 문항 없음 — 모든 문항에 응답</p>';
+    return blockWrap("⏱️ 소요시간 분포 · 미응답률", dn + "명 소요시간 측정", '<div class="grid2"><div><div class="qlabel">설문 소요시간 분포</div>' + durBars + "</div><div><div class=\"qlabel\">문항별 미응답률 (상위 10)</div>" + missBars + "</div></div>");
+  }
+
   /* ---------------- 기수·연도 비교 ---------------- */
   const CMP_METRICS = [
     { id: "count", label: "응답 수", kind: "count" },
@@ -192,20 +255,14 @@
     const metric = CMP_METRICS.find((m) => m.id === cmpMetric) || CMP_METRICS[0];
     const cohorts = cohortOrder(ALL);
     const years = yearOrder(ALL);
-
-    // 응답 수 by cohort & year (always shown)
     const cohortCounts = cohorts.map((c) => ({ k: c, n: ALL.filter((r) => getCohort(r) === c).length }));
     const yearCounts = years.map((y) => ({ k: y, n: ALL.filter((r) => getYear(r) === y).length }));
     const ccMax = Math.max(1, ...cohortCounts.map((x) => x.n));
     const ycMax = Math.max(1, ...yearCounts.map((x) => x.n));
-
-    // selected metric by cohort & year
     const cohortMetric = cohorts.map((c) => ({ k: c, m: groupMetric(ALL.filter((r) => getCohort(r) === c), metric), n: ALL.filter((r) => getCohort(r) === c).length }));
     const yearMetric = years.map((y) => ({ k: y, m: groupMetric(ALL.filter((r) => getYear(r) === y), metric), n: ALL.filter((r) => getYear(r) === y).length }));
     const metMax = metric.kind === "count" ? Math.max(1, ...cohortMetric.map((x) => x.m.v), ...yearMetric.map((x) => x.m.v)) : (metric.max || 5);
-
     const sel = '<select id="cmpMetric">' + CMP_METRICS.map((m) => '<option value="' + m.id + '"' + (m.id === cmpMetric ? " selected" : "") + ">" + esc(m.label) + "</option>").join("") + "</select>";
-
     const html =
       '<div class="block"><h3>📈 기수별 · 연도별 비교</h3>' +
       '<p class="sub">전체 데이터를 기수와 연도로 나누어 비교합니다. (아래 상세 통계는 필터에 따라 달라집니다)</p>' +
@@ -218,13 +275,12 @@
         '<div><div class="qlabel">기수별 ' + esc(metric.label) + "</div>" + cohortMetric.map((x, i) => bar(x.k + " (" + x.n + "명)", x.m.v, metMax, x.m.txt, i === 0 && metric.kind !== "count")).join("") + "</div>" +
         '<div><div class="qlabel">연도별 ' + esc(metric.label) + "</div>" + (yearMetric.length ? yearMetric.map((x) => bar(x.k + " (" + x.n + "명)", x.m.v, metMax, x.m.txt)).join("") : '<p class="muted">데이터 없음</p>') + "</div>" +
       "</div></div>";
-
     document.getElementById("compare").innerHTML = html;
     const ms = document.getElementById("cmpMetric");
     if (ms) ms.onchange = () => { cmpMetric = ms.value; renderCompare(); };
   }
 
-  /* ---------------- 교차 분석 ---------------- */
+  /* ---------------- 교차 분석 (그룹별 평균) ---------------- */
   function crossAnalysisHTML() {
     const groupQs = [];
     SCHEMA.forEach((sec) => sec.questions.forEach((q) => { if (q.type === "single") groupQs.push(q); }));
@@ -234,7 +290,7 @@
       { id: "mentoring_topics", label: "멘토링 필요도 평균(7번)" },
       { id: "jobservice_need", label: "취업연계 필요도 평균(8번)" },
     ];
-    return '<div class="block"><h3>🔬 교차 분석</h3>' +
+    return '<div class="block"><h3>🔬 교차 분석 (그룹별 평균)</h3>' +
       '<p class="sub">그룹별로 평균을 비교합니다. (예: 전공 계열별 사전 역량 차이) — 현재 필터 적용됨</p>' +
       '<div class="toolbar">그룹 기준: <select id="cxGroup">' +
       groupQs.map((q) => '<option value="' + q.id + '">' + esc(q.title.replace(/^\d+\.\s*/, "")) + "</option>").join("") +
@@ -244,6 +300,7 @@
   }
   function crossRender(responses, groupId, metricId) {
     const gq = QIDX[groupId], mq = QIDX[metricId];
+    if (!gq || !gq.options || !mq || !mq.items) return "";
     const groups = {}; gq.options.forEach((o) => (groups[o] = { sum: 0, n: 0 }));
     responses.forEach((r) => {
       const g = val(r, groupId), mv = val(r, metricId);
@@ -261,8 +318,131 @@
     g.onchange = run; m.onchange = run; run();
   }
 
-  /* ---------------- CSV ---------------- */
-  function toCSV(responses) {
+  /* ---------------- 교차 히트맵 (단일 × 단일 응답 수) ---------------- */
+  function heatmapHTML() {
+    const singles = [];
+    SCHEMA.forEach((sec) => sec.questions.forEach((q) => { if (q.type === "single") singles.push(q); }));
+    if (singles.length < 2) return "";
+    const opt = (selId, def) => '<select id="' + selId + '">' + singles.map((q) => '<option value="' + q.id + '"' + (q.id === def ? " selected" : "") + ">" + esc(q.title.replace(/^\d+\.\s*/, "")) + "</option>").join("") + "</select>";
+    const def1 = QIDX["major"] ? "major" : singles[0].id;
+    const def2 = QIDX["region"] ? "region" : (singles[1] ? singles[1].id : singles[0].id);
+    return '<div class="block"><h3>🗺️ 교차 히트맵</h3><p class="sub">두 문항을 교차해 응답 수를 봅니다. 색이 진할수록 많음. (현재 필터 적용)</p>' +
+      '<div class="toolbar">행: ' + opt("hmRow", def1) + " 열: " + opt("hmCol", def2) + "</div>" +
+      '<div id="hmOut" style="overflow:auto;margin-top:12px"></div></div>';
+  }
+  function heatRender(subset, rowId, colId) {
+    const rq = QIDX[rowId], cq = QIDX[colId];
+    if (!rq || !rq.options || !cq || !cq.options) return "";
+    const counts = {}; let mx = 0;
+    rq.options.forEach((ro) => { counts[ro] = {}; cq.options.forEach((co) => (counts[ro][co] = 0)); });
+    subset.forEach((r) => { const rv = val(r, rowId), cv = val(r, colId); if (rv in counts && cv in counts[rv]) { counts[rv][cv]++; if (counts[rv][cv] > mx) mx = counts[rv][cv]; } });
+    let html = '<table class="hm"><tr><th></th>' + cq.options.map((co) => "<th>" + esc(co) + "</th>").join("") + "<th>합계</th></tr>";
+    rq.options.forEach((ro) => {
+      let rowSum = 0;
+      html += '<tr><td class="rowh">' + esc(ro) + "</td>" + cq.options.map((co) => {
+        const n = counts[ro][co]; rowSum += n; const a = mx ? n / mx : 0;
+        const bg = n ? "background:rgba(31,111,235," + (0.08 + a * 0.55).toFixed(2) + ")" : "";
+        return '<td style="' + bg + '">' + (n || "") + "</td>";
+      }).join("") + "<td><b>" + rowSum + "</b></td></tr>";
+    });
+    html += '<tr><td class="rowh">합계</td>' + cq.options.map((co) => { let s = 0; rq.options.forEach((ro) => (s += counts[ro][co])); return "<td><b>" + s + "</b></td>"; }).join("") + "<td><b>" + subset.length + "</b></td></tr>";
+    return html + "</table>";
+  }
+  function bindHeat(subset) {
+    const rr = document.getElementById("hmRow"), cc = document.getElementById("hmCol"); if (!rr || !cc) return;
+    const run = () => { document.getElementById("hmOut").innerHTML = heatRender(subset, rr.value, cc.value); };
+    rr.onchange = run; cc.onchange = run; run();
+  }
+
+  /* ---------------- 서술형 키워드 빈도 ---------------- */
+  const STOPWORDS = new Set("그리고 그래서 하지만 그러나 또한 너무 정말 진짜 매우 조금 그냥 같아요 같습니다 합니다 했으면 좋겠 좋겠습니다 좋겠어요 있으면 있는 있다 없다 한다 해요 거의 통해 위해 위한 대한 대해 관련 등등 라고 라는 으로 에서 에게 부분 생각 같다 많이 많은 우리 저희 그것 이것 저것".split(/\s+/));
+  function keywordsHTML(subset) {
+    const freq = {};
+    SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
+      if (q.type !== "text" && q.type !== "textarea") return;
+      subset.forEach((r) => {
+        const v = val(r, q.id); if (!v) return;
+        String(v).toLowerCase().split(/[^0-9a-z가-힣]+/).forEach((tok) => {
+          tok = tok.trim(); if (tok.length < 2) return; if (STOPWORDS.has(tok)) return;
+          freq[tok] = (freq[tok] || 0) + 1;
+        });
+      });
+    }));
+    const items = Object.keys(freq).map((k) => ({ k, n: freq[k] })).sort((a, b) => b.n - a.n).slice(0, 30);
+    if (!items.length) return "";
+    const max = items[0].n, min = items[items.length - 1].n;
+    const size = (n) => { const t = max === min ? 1 : (n - min) / (max - min); return (14 + t * 22).toFixed(0); };
+    const cloud = items.map((it) => '<span class="kw" style="font-size:' + size(it.n) + 'px">' + esc(it.k) + " <small>" + it.n + "</small></span>").join("");
+    return blockWrap("💬 서술형 키워드 빈도", "자유응답에서 자주 등장한 단어 상위 " + items.length + "개", '<div class="kwcloud">' + cloud + "</div>");
+  }
+
+  /* ---------------- 데이터 관리 (초기화 / 선택 삭제 / 뷰어) ---------------- */
+  function snippet(r) {
+    const parts = [];
+    SCHEMA.forEach((sec) => sec.questions.forEach((q) => { if ((q.type === "text" || q.type === "textarea")) { const v = val(r, q.id); if (v && String(v).trim()) parts.push(String(v).trim()); } }));
+    return parts.join(" / ").slice(0, 80);
+  }
+  function dataManageHTML(subset) {
+    const cohorts = cohortOrder(ALL);
+    const cohortSel = '<select id="dmCohort">' + cohorts.map((c) => '<option value="' + esc(c) + '">' + esc(c) + " (" + ALL.filter((r) => getCohort(r) === c).length + "명)</option>").join("") + "</select>";
+    let rows = "";
+    subset.forEach((r, i) => {
+      const sub = [getCohort(r), getYear(r), val(r, "gender"), val(r, "region"), val(r, "major"), snippet(r)].map((x) => String(x == null ? "" : x).toLowerCase()).join(" ");
+      const t = r.meta && r.meta.submittedAt ? new Date(r.meta.submittedAt).toLocaleString("ko-KR") : "";
+      const dur = r.meta && r.meta.durationSec ? (r.meta.durationSec / 60).toFixed(1) : "";
+      rows += '<tr data-search="' + esc(sub) + '">' +
+        '<td><input type="checkbox" class="dmChk" value="' + esc(r.id) + '"></td>' +
+        "<td>" + (i + 1) + "</td><td>" + esc(t) + "</td><td>" + esc(getCohort(r)) + "</td><td>" + esc(getYear(r)) + "</td><td>" + esc(dur) + "</td>" +
+        "<td>" + esc(val(r, "gender") || "") + "</td><td>" + esc(val(r, "region") || "") + "</td><td>" + esc(val(r, "major") || "") + "</td>" +
+        '<td class="wrapcell">' + esc(snippet(r)) + "</td></tr>";
+    });
+    return '<div class="block no-print"><h3>🗂️ 데이터 관리</h3>' +
+      '<p class="sub">불량/중복/테스트 응답을 선택해 삭제하거나, 특정 기수 데이터를 한 번에 초기화합니다. <b style="color:#c92a2a">삭제는 되돌릴 수 없습니다.</b></p>' +
+      '<div class="toolbar"><b>기수별 초기화:</b> ' + cohortSel + '<button class="btn-danger" id="dmResetBtn">이 기수 데이터 삭제</button></div>' +
+      '<div class="toolbar" style="margin-top:12px"><input id="dmSearch" placeholder="응답 내용 검색(기수·지역·전공·서술형…)" style="flex:1;min-width:200px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px">' +
+      '<button class="btn-danger" id="dmDeleteBtn">선택 응답 삭제</button></div>' +
+      '<div class="dwrap" style="margin-top:12px"><table class="dtable"><thead><tr>' +
+      '<th><input type="checkbox" id="dmAll"></th><th>#</th><th>제출시각</th><th>기수</th><th>연도</th><th>소요(분)</th><th>성별</th><th>지역</th><th>전공</th><th>서술형 요약</th>' +
+      '</tr></thead><tbody id="dmBody">' + (rows || '<tr><td colspan="10" class="muted" style="padding:14px">표시할 응답이 없습니다.</td></tr>') + "</tbody></table></div>" +
+      '<p class="seg" id="dmCount" style="margin-top:8px"></p></div>';
+  }
+  function bindDataManage(subset) {
+    const all = document.getElementById("dmAll");
+    const body = document.getElementById("dmBody");
+    const search = document.getElementById("dmSearch");
+    const countEl = document.getElementById("dmCount");
+    const chks = () => Array.from(document.querySelectorAll(".dmChk"));
+    const updateCount = () => { const sel = chks().filter((c) => c.checked && c.closest("tr").style.display !== "none").length; if (countEl) countEl.textContent = "표시 " + Array.from(body.querySelectorAll("tr")).filter((tr) => tr.style.display !== "none" && tr.querySelector(".dmChk")).length + "건 · 선택 " + sel + "건"; };
+    if (all) all.onchange = () => { chks().forEach((c) => { if (c.closest("tr").style.display !== "none") c.checked = all.checked; }); updateCount(); };
+    if (body) body.addEventListener("change", (e) => { if (e.target.classList.contains("dmChk")) updateCount(); });
+    if (search) search.oninput = () => {
+      const q = search.value.trim().toLowerCase();
+      Array.from(body.querySelectorAll("tr")).forEach((tr) => { const s = tr.getAttribute("data-search") || ""; tr.style.display = (!q || s.indexOf(q) >= 0) ? "" : "none"; });
+      updateCount();
+    };
+    updateCount();
+
+    const resetBtn = document.getElementById("dmResetBtn");
+    if (resetBtn) resetBtn.onclick = async () => {
+      const cohort = document.getElementById("dmCohort").value;
+      const n = ALL.filter((r) => getCohort(r) === cohort).length;
+      if (!n) return alert(cohort + " 데이터가 없습니다.");
+      if (!confirm(cohort + " 응답 " + n + "건을 모두 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+      try { const res = await apiPost("api/responses/delete-cohort", { cohort }); alert(res.deleted + "건을 삭제했습니다."); await load(sessionStorage.getItem(KEY_STORE)); }
+      catch (e) { alert("삭제 실패: " + e.message); }
+    };
+    const delBtn = document.getElementById("dmDeleteBtn");
+    if (delBtn) delBtn.onclick = async () => {
+      const ids = chks().filter((c) => c.checked).map((c) => c.value);
+      if (!ids.length) return alert("삭제할 응답을 먼저 선택하세요.");
+      if (!confirm("선택한 응답 " + ids.length + "건을 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+      try { const res = await apiPost("api/responses/delete", { ids }); alert(res.deleted + "건을 삭제했습니다."); await load(sessionStorage.getItem(KEY_STORE)); }
+      catch (e) { alert("삭제 실패: " + e.message); }
+    };
+  }
+
+  /* ---------------- 내보내기 (원본 CSV / 집계표 CSV / Excel / 인쇄) ---------------- */
+  function rawTableRows(responses) {
     const cols = ["응답번호", "기수", "연도", "제출시각", "소요(분)"];
     const getters = [
       (r, i) => i + 1,
@@ -272,41 +452,83 @@
       (r) => (r.meta && r.meta.durationSec ? (r.meta.durationSec / 60).toFixed(1) : ""),
     ];
     SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
-      if (q.id === "cohort") return; // already covered
+      if (q.id === "cohort") return;
       if (q.type === "likert_grid") q.items.forEach((it) => { cols.push(q.id + ":" + it.label); getters.push((r) => { const v = val(r, q.id); return v && v[it.id] != null ? v[it.id] : ""; }); });
       else if (q.type === "rank") { for (let s = 0; s < q.slots; s++) { cols.push(q.title + " " + (s + 1) + "순위"); getters.push((r) => { const v = val(r, q.id); return Array.isArray(v) ? (v[s] || "") : ""; }); } }
       else if (q.type === "multi") { cols.push(q.title); getters.push((r) => { const v = val(r, q.id); return Array.isArray(v) ? v.join(" | ") : ""; }); }
       else { cols.push(q.title); getters.push((r) => { const v = val(r, q.id); return v == null ? "" : v; }); }
     }));
-    const qq = (s) => '"' + String(s).replace(/"/g, '""') + '"';
-    const lines = [cols.map(qq).join(",")];
-    responses.forEach((r, i) => lines.push(getters.map((g) => qq(g(r, i))).join(",")));
-    return "﻿" + lines.join("\r\n");
+    const rows = [cols];
+    responses.forEach((r, i) => rows.push(getters.map((g) => g(r, i))));
+    return rows;
   }
-  function downloadCSV(responses) {
-    const blob = new Blob([toCSV(responses)], { type: "text/csv;charset=utf-8;" });
+  function summaryRows(subset) {
+    const rows = [["섹션", "문항", "항목", "값", "비율/비고"]];
+    SCHEMA.forEach((sec) => sec.questions.forEach((q) => {
+      if (q.id === "cohort") return;
+      if (q.type === "single") { const { c, answered } = countSingle(q, subset); q.options.forEach((o) => rows.push([sec.title, q.title, o, c[o] + "명", pct(c[o], answered)])); }
+      else if (q.type === "multi") { const { c, answered } = countMulti(q, subset); q.options.forEach((o) => rows.push([sec.title, q.title, o, c[o] + "명", pct(c[o], answered)])); }
+      else if (q.type === "likert_grid") { gridAverages(q, subset).forEach((a) => rows.push([sec.title, q.title, a.label, a.avg.toFixed(2) + " / 5", a.n + "명"])); }
+      else if (q.type === "rank") { const { score, first } = rankScores(q, subset); q.options.forEach((o) => rows.push([sec.title, q.title, o, score[o] + "점", "1순위 " + first[o] + "명"])); }
+      else if (q.type === "slider") { const s = sliderStats(q.id, subset); rows.push([sec.title, q.title, "평균", s.avg.toFixed(1) + (q.unit || ""), s.n + "명"]); }
+      else if (q.type === "text" || q.type === "textarea") { rows.push([sec.title, q.title, "응답 수", texts(q, subset).length + "건", ""]); }
+    }));
+    return rows;
+  }
+  function csvFromRows(rows) { const qq = (s) => '"' + String(s).replace(/"/g, '""') + '"'; return "﻿" + rows.map((r) => r.map(qq).join(",")).join("\r\n"); }
+  function downloadBlob(content, mime, baseName, ext) {
+    const blob = new Blob([content], { type: mime });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "배터리아카데미_수요조사_" + new Date().toISOString().slice(0, 10) + ".csv";
+    a.download = "배터리아카데미_" + baseName + "_" + new Date().toISOString().slice(0, 10) + ext;
     a.click();
+  }
+  function downloadRawCSV(responses) { downloadBlob(csvFromRows(rawTableRows(responses)), "text/csv;charset=utf-8;", "수요조사_원본", ".csv"); }
+  function downloadSummaryCSV(subset) { downloadBlob(csvFromRows(summaryRows(subset)), "text/csv;charset=utf-8;", "수요조사_집계표", ".csv"); }
+  function xmlEsc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  function sheetXML(name, rows) {
+    const body = rows.map((row) => "<Row>" + row.map((cell) => {
+      const num = typeof cell === "number" && isFinite(cell);
+      return '<Cell><Data ss:Type="' + (num ? "Number" : "String") + '">' + xmlEsc(cell) + "</Data></Cell>";
+    }).join("") + "</Row>").join("");
+    return '<Worksheet ss:Name="' + xmlEsc(name) + '"><Table>' + body + "</Table></Worksheet>";
+  }
+  function downloadXLS(subset) {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n' +
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+      sheetXML("집계표", summaryRows(subset)) + sheetXML("원본", rawTableRows(subset)) + "</Workbook>";
+    downloadBlob("﻿" + xml, "application/vnd.ms-excel", "수요조사", ".xls");
   }
 
   /* ---------------- 상세 통계 (필터 적용) ---------------- */
   function currentSubset() {
-    return ALL.filter((r) => (fCohort === "ALL" || getCohort(r) === fCohort) && (fYear === "ALL" || String(getYear(r)) === String(fYear)));
+    return ALL.filter((r) => FILTER_DEFS.every((d) => {
+      const f = filters[d.id]; if (f === "ALL") return true;
+      if (d.id === "cohort") return getCohort(r) === f;
+      if (d.id === "year") return String(getYear(r)) === String(f);
+      const v = val(r, d.q || d.id); return String(v == null ? "" : v) === f;
+    }));
+  }
+  function filterLabelText() {
+    const parts = [];
+    FILTER_DEFS.forEach((d) => { if (filters[d.id] !== "ALL") parts.push(d.label + ": " + filters[d.id]); });
+    return parts.length ? parts.join(" · ") : "전체 응답";
   }
   function kpi(num, lab) { return '<div class="kpi"><div class="num">' + esc(num) + '</div><div class="lab">' + esc(lab) + "</div></div>"; }
   function renderDetail(subset) {
     const n = subset.length;
-    const filterLabel = (fCohort === "ALL" ? "전체 기수" : fCohort) + " · " + (fYear === "ALL" ? "전체 연도" : fYear + "년");
+    const filterLabel = filterLabelText();
     if (n === 0) {
-      document.getElementById("detail").innerHTML = '<div class="block center"><p class="muted">선택한 조건(' + esc(filterLabel) + ')에 해당하는 응답이 없습니다.</p></div>';
+      document.getElementById("detail").innerHTML = '<div class="block center"><p class="muted">선택한 조건(' + esc(filterLabel) + ')에 해당하는 응답이 없습니다.</p></div>' + dataManageHTML(subset);
+      bindDataManage(subset);
       return;
     }
     const durs = subset.map((r) => r.meta && r.meta.durationSec).filter((x) => x);
     const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 60) : "—";
     let html = '<div class="block" style="background:var(--brand-soft);border-color:#cfe0ff"><b>상세 통계 기준:</b> ' + esc(filterLabel) + "</div>";
     html += '<div class="kpis">' + kpi(n, "응답 수") + kpi(avgDur, "평균 소요(분)") + kpi(Math.round(wantRate(subset)) + "%", "멘토링 참여희망") + "</div>";
+    html += trendHTML(subset);
+    html += durationMissingHTML(subset);
     SCHEMA.forEach((sec) => {
       html += '<div class="block" style="background:transparent;border:0;box-shadow:none;padding:8px 2px 0"><h3 style="font-size:18px">' + esc(sec.title) + "</h3></div>";
       sec.questions.forEach((q) => {
@@ -319,40 +541,61 @@
         else if (q.type === "text" || q.type === "textarea") html += blockText(q, subset);
       });
     });
+    html += heatmapHTML();
     html += crossAnalysisHTML();
+    html += keywordsHTML(subset);
+    html += dataManageHTML(subset);
     document.getElementById("detail").innerHTML = html;
+    bindHeat(subset);
     bindCross(subset);
+    bindDataManage(subset);
   }
 
   /* ---------------- main ---------------- */
   function render(all) {
     ALL = all;
-    let html = '<div class="toolbar" style="justify-content:flex-end;margin-bottom:14px">' +
-      '<button id="reloadBtn">↻ 새로고침</button><button id="csvBtn">⬇ 전체 CSV 내보내기</button><button id="logoutBtn">로그아웃</button></div>';
+    FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL"));
+    let html = '<div class="toolbar no-print" style="justify-content:flex-end;margin-bottom:14px">' +
+      '<button id="reloadBtn">↻ 새로고침</button>' +
+      '<button id="csvBtn">⬇ 원본 CSV</button>' +
+      '<button id="sumCsvBtn">⬇ 집계표 CSV</button>' +
+      '<button id="xlsBtn">⬇ Excel(.xls)</button>' +
+      '<button id="printBtn">🖨 인쇄/PDF</button>' +
+      '<button id="logoutBtn">로그아웃</button></div>';
     if (all.length === 0) {
       html += '<div class="block center"><div class="big-emoji">🗂️</div><h3>아직 제출된 응답이 없습니다</h3>' +
         '<p class="muted">설문(또는 기수별 링크)을 공유한 뒤 응답이 들어오면 이곳에 통계가 표시됩니다.</p></div>';
       root.innerHTML = html; bindTop(); return;
     }
-    const cohorts = cohortOrder(all), years = yearOrder(all);
-    html += '<div class="block"><div class="toolbar">' +
-      '<b>필터</b> 기수: <select id="fCohort"><option value="ALL">전체</option>' +
-      cohorts.map((c) => '<option value="' + esc(c) + '">' + esc(c) + "</option>").join("") + "</select>" +
-      ' 연도: <select id="fYear"><option value="ALL">전체</option>' +
-      years.map((y) => '<option value="' + esc(y) + '">' + esc(y) + "</option>").join("") + "</select>" +
-      '<span class="seg">총 ' + all.length + "명 응답</span></div></div>";
+    // 필터 UI
+    let filtUI = "<b>필터</b> ";
+    FILTER_DEFS.forEach((d) => {
+      let opts;
+      if (d.id === "cohort") opts = cohortOrder(all);
+      else if (d.id === "year") opts = yearOrder(all);
+      else { const q = QIDX[d.q || d.id]; if (!q) return; opts = q.options; }
+      filtUI += d.label + ': <select data-filter="' + d.id + '"><option value="ALL">전체</option>' +
+        opts.map((o) => '<option value="' + esc(o) + '">' + esc(o) + "</option>").join("") + "</select> ";
+    });
+    html += '<div class="block no-print"><div class="toolbar">' + filtUI +
+      '<span class="seg">총 ' + all.length + "명 응답</span> <button id=\"clearFilters\">필터 초기화</button></div></div>";
     html += '<div id="compare"></div><div id="detail"></div>';
     root.innerHTML = html;
     bindTop();
-    const fc = document.getElementById("fCohort"), fy = document.getElementById("fYear");
-    fc.onchange = () => { fCohort = fc.value; renderDetail(currentSubset()); };
-    fy.onchange = () => { fYear = fy.value; renderDetail(currentSubset()); };
+    document.querySelectorAll("select[data-filter]").forEach((sel) => {
+      sel.onchange = () => { filters[sel.getAttribute("data-filter")] = sel.value; renderDetail(currentSubset()); };
+    });
+    const cf = document.getElementById("clearFilters");
+    if (cf) cf.onclick = () => { FILTER_DEFS.forEach((d) => (filters[d.id] = "ALL")); document.querySelectorAll("select[data-filter]").forEach((s) => (s.value = "ALL")); renderDetail(currentSubset()); };
     renderCompare();
     renderDetail(currentSubset());
   }
   function bindTop() {
     const rb = document.getElementById("reloadBtn"); if (rb) rb.onclick = () => load(sessionStorage.getItem(KEY_STORE));
-    const cb = document.getElementById("csvBtn"); if (cb) cb.onclick = () => downloadCSV(ALL);
+    const cb = document.getElementById("csvBtn"); if (cb) cb.onclick = () => downloadRawCSV(ALL);
+    const sb = document.getElementById("sumCsvBtn"); if (sb) sb.onclick = () => downloadSummaryCSV(currentSubset());
+    const xb = document.getElementById("xlsBtn"); if (xb) xb.onclick = () => downloadXLS(currentSubset());
+    const pb = document.getElementById("printBtn"); if (pb) pb.onclick = () => window.print();
     const lo = document.getElementById("logoutBtn"); if (lo) lo.onclick = () => { sessionStorage.removeItem(KEY_STORE); loginScreen(); };
   }
 

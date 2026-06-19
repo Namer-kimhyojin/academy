@@ -39,6 +39,32 @@
     padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
   .pillrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
   .seg{font-size:12px;color:var(--muted)}
+  /* 버튼 변형 */
+  .toolbar button.btn-danger{background:#fff0f0;border-color:#ffc9c9;color:#c92a2a}
+  .toolbar button.btn-go{background:var(--brand);border-color:var(--brand);color:#fff}
+  /* 응답 뷰어 테이블 */
+  .dwrap{max-height:440px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  table.dtable{border-collapse:collapse;width:100%;font-size:13px}
+  table.dtable th,table.dtable td{border-bottom:1px solid var(--line);padding:7px 9px;text-align:left;white-space:nowrap}
+  table.dtable th{position:sticky;top:0;background:#f4f7fc;font-weight:700;z-index:1}
+  table.dtable tr:hover td{background:#fafcff}
+  table.dtable td.wrapcell{white-space:normal;min-width:160px;color:var(--muted)}
+  /* 히트맵 */
+  table.hm{border-collapse:collapse;font-size:12px;margin-top:6px}
+  table.hm th,table.hm td{border:1px solid #e3e8f0;padding:6px 9px;text-align:center;min-width:46px}
+  table.hm th{background:#f4f7fc;font-weight:700}
+  table.hm td.rowh{background:#f4f7fc;font-weight:700;text-align:right;white-space:nowrap}
+  /* 키워드 클라우드 */
+  .kwcloud{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
+  .kwcloud .kw{color:var(--brand-dark);font-weight:700}
+  .kwcloud .kw small{color:var(--muted);font-weight:400;font-size:11px}
+  /* 인쇄 */
+  @media print{
+    body.admin{background:#fff}
+    header.top,.toolbar,.no-print{display:none !important}
+    .block{box-shadow:none;border-color:#ccc;break-inside:avoid;page-break-inside:avoid}
+    .dwrap{max-height:none;overflow:visible}
+  }
 </style>
 </head>
 <body class="admin">
